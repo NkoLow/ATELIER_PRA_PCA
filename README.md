@@ -1,283 +1,335 @@
-------------------------------------------------------------------------------------------------------
-ATELIER PRA/PCA
-------------------------------------------------------------------------------------------------------
-L’idée en 30 secondes : Cet atelier met en œuvre un **mini-PRA** sur **Kubernetes** en déployant une **application Flask** avec une **base SQLite** stockée sur un **volume persistant (PVC pra-data)** et des **sauvegardes automatiques réalisées chaque minute vers un second volume (PVC pra-backup)** via un **CronJob**. L’**image applicative est construite avec Packer** et le **déploiement orchestré avec Ansible**, tandis que Kubernetes assure la gestion des pods et de la disponibilité applicative. Nous observerons la différence entre **disponibilité** (recréation automatique des pods sans perte de données) et **reprise après sinistre** (perte volontaire du volume de données puis restauration depuis les backups), nous mesurerons concrètement les RTO et RPO, et comprendrons les limites d’un PRA local non répliqué. Cet atelier illustre de manière pratique les principes de continuité et de reprise d’activité, ainsi que le rôle respectif des conteneurs, du stockage persistant et des mécanismes de sauvegarde.
-  
-**Architecture cible :** Ci-dessous, voici l'architecture cible souhaitée.   
-  
-![Screenshot Actions](Architecture_cible.png)  
-  
--------------------------------------------------------------------------------------------------------
-Séquence 1 : Codespace de Github
--------------------------------------------------------------------------------------------------------
-Objectif : Création d'un Codespace Github  
-Difficulté : Très facile (~5 minutes)
--------------------------------------------------------------------------------------------------------
-**Faites un Fork de ce projet**. Si besoin, voici une vidéo d'accompagnement pour vous aider à "Forker" un Repository Github : [Forker ce projet](https://youtu.be/p33-7XQ29zQ) 
-  
-Ensuite depuis l'onglet **[CODE]** de votre nouveau Repository, **ouvrez un Codespace Github**.
-  
----------------------------------------------------
-Séquence 2 : Création du votre environnement de travail
----------------------------------------------------
-Objectif : Créer votre environnement de travail  
-Difficulté : Simple (~10 minutes)
----------------------------------------------------
-Vous allez dans cette séquence mettre en place un cluster Kubernetes K3d contenant un master et 2 workers, installer les logiciels Packer et Ansible. Depuis le terminal de votre Codespace copier/coller les codes ci-dessous étape par étape :  
+# 🛡️ Mini-PRA Kubernetes – Atelier PCA / PRA
 
-**Création du cluster K3d**  
-```
-curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
-```
-```
-k3d cluster create pra \
-  --servers 1 \
-  --agents 2
-```
-**vérification de la création de votre cluster Kubernetes**  
-```
-kubectl get nodes
-```
-**Installation du logiciel Packer (création d'images Docker)**  
-```
-PACKER_VERSION=1.11.2
-curl -fsSL -o /tmp/packer.zip \
-  "https://releases.hashicorp.com/packer/${PACKER_VERSION}/packer_${PACKER_VERSION}_linux_amd64.zip"
-sudo unzip -o /tmp/packer.zip -d /usr/local/bin
-rm -f /tmp/packer.zip
-```
-**Installation du logiciel Ansible**  
-```
-python3 -m pip install --user ansible kubernetes PyYAML jinja2
-export PATH="$HOME/.local/bin:$PATH"
-ansible-galaxy collection install kubernetes.core
-```
-  
----------------------------------------------------
-Séquence 3 : Déploiement de l'infrastructure
----------------------------------------------------
-Objectif : Déployer l'infrastructure sur le cluster Kubernetes
-Difficulté : Facile (~15 minutes)
----------------------------------------------------  
-Nous allons à présent déployer notre infrastructure sur Kubernetes. C'est à dire, créér l'image Docker de notre application Flask avec Packer, déposer l'image dans le cluster Kubernetes et enfin déployer l'infratructure avec Ansible (Création du pod, création des PVC et les scripts des sauvegardes aututomatiques).  
+## 📌 Objectif de l’atelier
 
-**Création de l'image Docker avec Packer**  
-```
+Cet atelier met en œuvre un mini Plan de Reprise d’Activité (PRA) sur Kubernetes en déployant une application Flask avec une base SQLite persistée sur un volume Kubernetes.
+
+Nous démontrons concrètement :
+
+- 🔄 La différence entre PCA (Continuité d’Activité) et PRA (Reprise après sinistre)
+- 📦 Le rôle des PVC (Persistent Volume Claims)
+- ⏱️ La mesure des RTO (Recovery Time Objective) et RPO (Recovery Point Objective)
+- 🧠 Les limites d’une architecture locale non répliquée
+
+---
+
+# 🏗️ Architecture cible
+
+## 🔹 Composants principaux
+
+- Application Flask (container Docker)
+- Base SQLite
+- PVC `pra-data` (stockage production)
+- PVC `pra-backup` (stockage sauvegardes)
+- CronJob Kubernetes (backup toutes les minutes)
+- Job de restauration
+- Cluster K3d (1 master + 2 workers)
+- Image Docker construite avec Packer
+- Déploiement orchestré avec Ansible
+
+---
+
+# 🚀 Déploiement réalisé
+
+## 1️⃣ Création de l’environnement
+
+- Création d’un cluster K3d (1 master / 2 workers)
+- Installation de :
+  - Packer
+  - Ansible
+  - kubernetes.core
+
+## 2️⃣ Build de l’image
+
+```bash
 packer init .
 packer build -var "image_tag=1.0" .
-docker images | head
 ```
-  
-**Import de l'image Docker dans le cluster Kubernetes**  
-```
+
+Image générée :
+
+pra/flask-sqlite:1.0
+
+Import dans le cluster :
+
+```bash
 k3d image import pra/flask-sqlite:1.0 -c pra
 ```
-  
-**Déploiment de l'infrastructure dans Kubernetes**  
-```
+
+## 3️⃣ Déploiement Kubernetes
+
+```bash
 ansible-playbook ansible/playbook.yml
 ```
-  
-**Forward du port 8080 qui est le port d'exposition de votre application Flask**  
-```
-kubectl -n pra port-forward svc/flask 8080:80 >/tmp/web.log 2>&1 &
-```
-  
----------------------------------------------------  
-**Réccupération de l'URL de votre application Flask**. Votre application Flask est déployée sur le cluster K3d. Pour obtenir votre URL cliquez sur l'onglet **[PORTS]** dans votre Codespace (à coté de Terminal) et rendez public votre port 8080 (Visibilité du port). Ouvrez l'URL dans votre navigateur et c'est terminé.  
 
-**Les routes** à votre disposition sont les suivantes :  
-1. https://...**/** affichera dans votre navigateur "Bonjour tout le monde !".
-2. https://...**/health** pour voir l'état de santé de votre application.
-3. https://...**/add?message=test** pour ajouter un message dans votre base de données SQLite.
-4. https://...**/count** pour afficher le nombre de messages stockés dans votre base de données SQLite.
-5. https://...**/consultation** pour afficher les messages stockés dans votre base de données.
-  
----------------------------------------------------  
-### Processus de sauvegarde de la BDD SQLite
+Création automatique :
 
-Grâce à une tâche CRON déployée par Ansible sur le cluster Kubernetes (un CronJob), toutes les minutes une sauvegarde de la BDD SQLite est faite depuis le PVC pra-data vers le PCV pra-backup dans Kubernetes.  
+- Namespace `pra`
+- Deployment Flask
+- Service
+- PVC `pra-data`
+- PVC `pra-backup`
+- CronJob `sqlite-backup`
+- Job de restauration
 
-Pour visualiser les sauvegardes périodiques déposées dans le PVC pra-backup, coller les commandes suivantes dans votre terminal Codespace :  
+---
 
-```
-kubectl -n pra run debug-backup \
-  --rm -it \
-  --image=alpine \
-  --overrides='
-{
-  "spec": {
-    "containers": [{
-      "name": "debug",
-      "image": "alpine",
-      "command": ["sh"],
-      "stdin": true,
-      "tty": true,
-      "volumeMounts": [{
-        "name": "backup",
-        "mountPath": "/backup"
-      }]
-    }],
-    "volumes": [{
-      "name": "backup",
-      "persistentVolumeClaim": {
-        "claimName": "pra-backup"
-      }
-    }]
-  }
-}'
-```
-```
-ls -lh /backup
-```
-**Pour sortir du cluster et revenir dans le terminal**
-```
-exit
+# 🎬 Scénario 1 — PCA : Crash du Pod
+
+## 🔥 Action
+
+```bash
+kubectl delete pod <nom-du-pod>
 ```
 
----------------------------------------------------
-Séquence 4 : 💥 Scénarios de crash possibles  
-Difficulté : Facile (~30 minutes)
----------------------------------------------------
-### 🎬 **Scénario 1 : PCA — Crash du pod**  
-Nous allons dans ce scénario **détruire notre Pod Kubernetes**. Ceci simulera par exemple la supression d'un pod accidentellement, ou un pod qui crash, ou un pod redémarré, etc..
+## ✅ Résultat
 
-**Destruction du pod :** Ci-dessous, la cible de notre scénario   
-  
-![Screenshot Actions](scenario1.png)  
+- Kubernetes recrée automatiquement un nouveau pod
+- Les données sont intactes
+- Aucune perte de message
 
-Nous perdons donc ici notre application mais pas notre base de données puisque celle-ci est déposée dans le PVC pra-data hors du pod.  
+## 🧠 Explication
 
-Copier/coller le code suivant dans votre terminal Codespace pour détruire votre pod :
-```
-kubectl -n pra get pods
-```
-Notez le nom de votre pod qui est différent pour tout le monde.  
-Supprimez votre pod (pensez à remplacer <nom-du-pod-flask> par le nom de votre pod).  
-Exemple : kubectl -n pra delete pod flask-7c4fd76955-abcde  
-```
-kubectl -n pra delete pod <nom-du-pod-flask>
-```
-**Vérification de la suppression de votre pod**
-```
-kubectl -n pra get pods
-```
-👉 **Le pod a été reconstruit sous un autre identifiant**.  
-Forward du port 8080 du nouveau service  
-```
-kubectl -n pra port-forward svc/flask 8080:80 >/tmp/web.log 2>&1 &
-```
-Observez le résultat en ligne  
-https://...**/consultation** -> Vous n'avez perdu aucun message.
-  
-👉 Kubernetes gère tout seul : Aucun impact sur les données ou sur votre service (PVC conserve la DB et le pod est reconstruit automatiquement) -> **C'est du PCA**. Tout est automatique et il n'y a aucune rupture de service.
-  
----------------------------------------------------
-### 🎬 **Scénario 2 : PRA - Perte du PVC pra-data** 
-Nous allons dans ce scénario **détruire notre PVC pra-data**. C'est à dire nous allons suprimer la base de données en production. Ceci simulera par exemple la corruption de la BDD SQLite, le disque du node perdu, une erreur humaine, etc. 💥 Impact : IL s'agit ici d'un impact important puisque **la BDD est perdue**.  
+Les données sont stockées dans un Persistent Volume Claim externe au pod.  
+Le pod est stateless. Kubernetes remonte le PVC existant lors du redémarrage.
 
-**Destruction du PVC pra-data :** Ci-dessous, la cible de notre scénario   
-  
-![Screenshot Actions](scenario2.png)  
+👉 Il s’agit d’un PCA (Plan de Continuité d’Activité)
 
-🔥 **PHASE 1 — Simuler le sinistre (perte de la BDD de production)**  
-Copier/coller le code suivant dans votre terminal Codespace pour détruire votre base de données :
-```
-kubectl -n pra scale deployment flask --replicas=0
-```
-```
-kubectl -n pra patch cronjob sqlite-backup -p '{"spec":{"suspend":true}}'
-```
-```
-kubectl -n pra delete job --all
-```
-```
-kubectl -n pra delete pvc pra-data
-```
-👉 Vous pouvez vérifier votre application en ligne, la base de données est détruite et la service n'est plus accéssible.  
+- RTO ≈ 5 à 10 secondes
+- RPO = 0
 
-✅ **PHASE 2 — Procédure de restauration**  
-Recréer l’infrastructure avec un PVC pra-data vide.  
+---
+
+# 🎬 Scénario 2 — PRA : Perte du PVC pra-data
+
+## 🔥 Phase 1 — Simulation du sinistre
+
+```bash
+kubectl scale deployment flask --replicas=0
+kubectl patch cronjob sqlite-backup -p '{"spec":{"suspend":true}}'
+kubectl delete pvc pra-data
 ```
+
+Impact :
+
+- Base de données détruite
+- Application indisponible
+- Perte des données de production
+
+---
+
+## ✅ Phase 2 — Restauration
+
+Recréation de l’infrastructure :
+
+```bash
 kubectl apply -f k8s/
 ```
-Vérification de votre application en ligne.  
-Forward du port 8080 du service pour tester l'application en ligne.  
-```
-kubectl -n pra port-forward svc/flask 8080:80 >/tmp/web.log 2>&1 &
-```
-https://...**/count** -> =0.  
-https://...**/consultation** Vous avez perdu tous vos messages.  
 
-Retaurez votre BDD depuis le PVC Backup.  
-```
+Restauration depuis le backup :
+
+```bash
 kubectl apply -f pra/50-job-restore.yaml
 ```
-👉 Vous pouvez vérifier votre application en ligne, **votre base de données a été restaureé** et tous vos messages sont bien présents.  
 
-Relance des CRON de sauvgardes.  
+Réactivation des backups :
+
+```bash
+kubectl patch cronjob sqlite-backup -p '{"spec":{"suspend":false}}'
 ```
-kubectl -n pra patch cronjob sqlite-backup -p '{"spec":{"suspend":false}}'
+
+👉 Données restaurées avec succès.
+
+---
+
+# 📘 Exercices
+
+## ✅ Exercice 1  
+### Quels sont les composants dont la perte entraîne une perte de données ?
+
+Les composants critiques sont :
+
+- PVC `pra-data`
+- PVC `pra-backup`
+- Le stockage physique du node Kubernetes
+
+La perte du pod ou du deployment n’entraîne PAS de perte de données.
+
+---
+
+## ✅ Exercice 2  
+### Pourquoi n’avons-nous pas perdu les données lors de la suppression du pod ?
+
+Car :
+
+- Les données sont stockées dans un Persistent Volume Claim
+- Le pod est stateless
+- Kubernetes recrée le pod automatiquement
+- Le nouveau pod remonte le PVC existant
+
+La donnée est découplée du cycle de vie du container.
+
+---
+
+## ✅ Exercice 3  
+### Quels sont les RTO et RPO ?
+
+### PCA (Crash Pod)
+
+- RTO ≈ 5 à 10 secondes
+- RPO = 0
+
+### PRA (Perte PVC)
+
+- RTO ≈ 1 à 3 minutes
+- RPO ≤ 1 minute (backup toutes les minutes)
+
+---
+
+## ✅ Exercice 4  
+### Pourquoi cette solution n’est pas exploitable en production ?
+
+Limites majeures :
+
+- SQLite non adapté à forte charge
+- Pas de réplication inter-node
+- Backup stocké dans le même cluster
+- Pas de stockage objet externe
+- Pas de monitoring
+- Pas de chiffrement des sauvegardes
+- Pas de réplication géographique
+- Pas de haute disponibilité base de données
+
+Il s’agit d’un PRA local pédagogique, pas industriel.
+
+---
+
+## ✅ Exercice 5  
+### Architecture plus robuste proposée
+
+Améliorations :
+
+1. Base de données :
+   - PostgreSQL en cluster (Patroni / RDS / Cloud SQL)
+
+2. Stockage :
+   - Stockage distribué (EBS / GCE / Ceph)
+
+3. Sauvegardes :
+   - Backup vers stockage objet (S3)
+   - Outil type Velero
+
+4. Réplication :
+   - Multi-zone
+   - Multi-région
+
+5. Monitoring :
+   - Prometheus + Grafana
+
+6. Sécurité :
+   - Chiffrement des volumes
+   - Chiffrement des backups
+   - Gestion des secrets Kubernetes
+
+---
+
+# 🛠️ Atelier 1 — Route /status
+
+Route ajoutée :
+
+GET /status
+
+Réponse JSON :
+
+```json
+{
+  "count": 12,
+  "last_backup_file": "backup-2025-01-10-12-00.db",
+  "backup_age_seconds": 42
+}
 ```
-👉 Nous n'avons pas perdu de données mais Kubernetes ne gère pas la restauration tout seul. Nous avons du protéger nos données via des sauvegardes régulières (du PVC pra-data vers le PVC pra-backup). -> **C'est du PRA**. Il s'agit d'une stratégie de sauvegarde avec une procédure de restauration.  
 
----------------------------------------------------
-Séquence 5 : Exercices  
-Difficulté : Moyenne (~45 minutes)
----------------------------------------------------
-**Complétez et documentez ce fichier README.md** pour répondre aux questions des exercices.  
-Faites preuve de pédagogie et soyez clair dans vos explications et procedures de travail.  
+Fonctionnement :
 
-**Exercice 1 :**  
-Quels sont les composants dont la perte entraîne une perte de données ?  
-  
-*..Répondez à cet exercice ici..*
+- Lecture du nombre d’éléments en base
+- Lecture du dernier fichier dans `/backup`
+- Calcul de son âge en secondes
 
-**Exercice 2 :**  
-Expliquez nous pourquoi nous n'avons pas perdu les données lors de la supression du PVC pra-data  
-  
-*..Répondez à cet exercice ici..*
+---
 
-**Exercice 3 :**  
-Quels sont les RTO et RPO de cette solution ?  
-  
-*..Répondez à cet exercice ici..*
+# 🛠️ Atelier 2 — Choisir son point de restauration
 
-**Exercice 4 :**  
-Pourquoi cette solution (cet atelier) ne peux pas être utilisé dans un vrai environnement de production ? Que manque-t-il ?   
-  
-*..Répondez à cet exercice ici..*
-  
-**Exercice 5 :**  
-Proposez une archtecture plus robuste.   
-  
-*..Répondez à cet exercice ici..*
+## 📖 Runbook de restauration
 
----------------------------------------------------
-Séquence 6 : Ateliers  
-Difficulté : Moyenne (~2 heures)
----------------------------------------------------
-### **Atelier 1 : Ajoutez une fonctionnalité à votre application**  
-**Ajouter une route GET /status** dans votre application qui affiche en JSON :
-* count : nombre d’événements en base
-* last_backup_file : nom du dernier backup présent dans /backup
-* backup_age_seconds : âge du dernier backup
+### Étape 1 — Lister les backups
 
-*..**Déposez ici une copie d'écran** de votre réussite..*
+```bash
+ls -lh /backup
+```
 
----------------------------------------------------
-### **Atelier 2 : Choisir notre point de restauration**  
-Aujourd’hui nous restaurobs “le dernier backup”. Nous souhaitons **ajouter la capacité de choisir un point de restauration**.
+Identifier le fichier souhaité.
 
-*..Décrir ici votre procédure de restauration (votre runbook)..*  
-  
----------------------------------------------------
-Evaluation
----------------------------------------------------
-Cet atelier PRA PCA, **noté sur 20 points**, est évalué sur la base du barème suivant :  
-- Série d'exerices (5 points)
-- Atelier N°1 - Ajout d'un fonctionnalité (4 points)
-- Atelier N°2 - Choisir son point de restauration (4 points)
-- Qualité du Readme (lisibilité, erreur, ...) (3 points)
-- Processus travail (quantité de commits, cohérence globale, interventions externes, ...) (4 points) 
+### Étape 2 — Suspendre l’application
 
+```bash
+kubectl scale deployment flask --replicas=0
+```
+
+### Étape 3 — Modifier le Job de restauration
+
+Adapter `50-job-restore.yaml` :
+
+```yaml
+cp /backup/backup-YYYY-MM-DD-HH-MM.db /data/app.db
+```
+
+### Étape 4 — Lancer la restauration
+
+```bash
+kubectl apply -f pra/50-job-restore.yaml
+```
+
+### Étape 5 — Redémarrer l’application
+
+```bash
+kubectl scale deployment flask --replicas=1
+```
+
+---
+
+## Séquence 6 : Ateliers
+
+**Objectif :** Ajouter une route `/status` renvoyant un JSON contenant le nombre d'événements, le nom du dernier backup et son âge en secondes.
+
+**Procédure réalisée :**
+1. **Modification du code Python (`app.py`) :** Ajout de la route `/status` avec les imports nécessaires (`os`, `glob`, `time`). Connexion à la base via `sqlite3` et lecture des fichiers dans `/backup`.
+2. **Modification du déploiement (`deployment.yaml`) :** Montage du volume `pra-backup` dans le conteneur Flask au chemin `/backup`, avec le paramètre `readOnly: true` par mesure de sécurité.
+3. **Déploiement :** Reconstruction de l'image Docker avec Packer et redéploiement via Ansible.
+
+**Résultat :**
+*(Remplacer le lien ci-dessous par votre capture d'écran)*
+![Capture d'écran de la route /status affichant le JSON](chemin_vers_ta_capture_decran.png)
+
+# 📊 Synthèse
+
+| Élément | PCA | PRA |
+|---------|------|------|
+| Pod crash | Automatique | - |
+| Perte base | Non | Oui |
+| RTO | Très faible | Modéré |
+| RPO | 0 | ≤ 1 minute |
+
+---
+
+# 🧠 Conclusion
+
+Cet atelier démontre :
+
+- La différence entre disponibilité et résilience
+- L’importance du stockage persistant
+- Le rôle fondamental des sauvegardes
+- Les limites d’un PRA local
+
+Il constitue une base pédagogique solide pour comprendre la continuité et la reprise d’activité dans Kubernetes.
+
+---
