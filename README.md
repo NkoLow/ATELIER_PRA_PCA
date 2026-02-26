@@ -307,8 +307,8 @@ kubectl scale deployment flask --replicas=1
 3. **Déploiement :** Reconstruction de l'image Docker avec Packer et redéploiement via Ansible.
 
 **Résultat :**
-*(Remplacer le lien ci-dessous par votre capture d'écran)*
-![Capture d'écran de la route /status affichant le JSON](chemin_vers_ta_capture_decran.png)
+
+![Capture d'écran de la route /status affichant le JSON](/workspaces/ATELIER_PRA_PCA/status.png)
 
 # 📊 Synthèse
 
