@@ -308,7 +308,7 @@ kubectl scale deployment flask --replicas=1
 
 **Résultat :**
 
-![Capture d'écran de la route /status affichant le JSON](/workspaces/ATELIER_PRA_PCA/status.png)
+![Capture d'écran de la route /status affichant le JSON](status.png)
 
 # 📊 Synthèse
 
